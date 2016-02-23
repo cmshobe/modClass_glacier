@@ -2,9 +2,13 @@
 """
 Created on Mon Feb 22 12:05:40 2016
 
-@author: Charlie
+@author: Charlie Shobe
 
-Glacier code for modeling class
+Glacier code for modeling class:
+-Combines glacial erosion with fluvial erosion where there is no ice.
+-ELA can fluctuate sinusoidally if so chosen.
+-VERY SLOW, requires a very tiny dt for stability because so nonlinear.
+-Could be made fast with a combination Euler Backward/Newton-Raphson iteration.
 """
 from __future__ import division
 import numpy as np
@@ -20,11 +24,12 @@ slide_ratio = 0.05
 
 #spatial domain
 x_min = 0 #m
-dx = 100 #m
-x_max = 30000 #m
+dx = 200 #m
+x_max = 50000 #m
 x = np.arange(x_min, x_max + dx, dx, dtype=np.float128)
 ice_thickness = np.zeros((len(x)), dtype=np.float128)
-valley_width = 3000 #m
+e_param = .01 #no idea what this should be, or its units.
+fluvial_k = .000001 #fluvial erosion efficiency parameter
 
 #initial bedrock topography: plane for now
 zb_max = 4000 #m
@@ -33,25 +38,32 @@ zb = np.zeros((len(x)), dtype=np.float128)
 zb[:] = zb_max + zb_slope * x
 surface_elev = zb + ice_thickness
 
-#mass balance/climate
-z_ELA = 3700 #m
-dbdz = 0.01 #m/yr/m
-b_cap = 1
-
 #time domain
 t_min = 0
 dt = 0.001 #years
-t_max = 800 #years
+t_max = 50000 #years
 times = np.arange(t_min, t_max + dt, dt)
 
+#mass balance/climate
+z_ELA = 3400 #m
+sigma_ELA = 0 #set to 0 to turn off oscillations, or amplitude of ELA
+period = 300
+z_ELA_array = z_ELA + sigma_ELA * np.cos(2 * np.pi * times / period)
+dbdz = 0.01 #m/yr/m
+b_cap = 1
+
 #plotting
-t_plot = 10 #years
+t_plot = 1000 #years
 
 glacier_fig = plt.figure(figsize=(14,6)) #instantiate figure
-glacier = plt.subplot()
+glacier = plt.subplot(211)
 plt.gcf().subplots_adjust(bottom=0.20)
 plt.xlabel('Distance [km]')
 plt.ylabel('Elevation [m]')
+
+discharge_profile = plt.subplot(212)
+plt.xlabel('Distance [km]')
+plt.ylabel('Ice Discharge [m2/yr]')
 plt.ion()
 plt.show()
 
@@ -63,42 +75,63 @@ for t in range(len(times) - 1):
     it += 1
     current_time = times[t]
     #mass balance
-    b = dbdz * (surface_elev-z_ELA)
+    b = dbdz * (surface_elev-z_ELA_array[t])
     b[:] = b.clip(max = b_cap) #cap mass balance
-    #print ice_thickness
+    
     #interpolate ice thickness at cell edges
     edge_ice_thickness[:] = (ice_thickness[1:] + ice_thickness[0:-1]) / 2 #arithmetic mean
     edge_ice_surface_slopes[:] = -np.diff(surface_elev) / dx  
     
     #calculate ice flux
-    q = np.zeros((len(x)-1), dtype=np.float128)
-    q[:] = (a / 5) * np.power(rho_i * g * edge_ice_surface_slopes, 3) * np.power(edge_ice_thickness, 5)
+    q_def = np.zeros((len(x)-1), dtype=np.float128)
+    deformation_speed = np.zeros((len(x)-1), dtype=np.float128)
+    q_slide = np.zeros((len(x)-1), dtype=np.float128)
+    dens_grav_power = np.power(rho_i * g * edge_ice_surface_slopes, 3)
+    edge_thick_power = np.power(edge_ice_thickness, 5)
+    edge_thick_power_2 = np.power(edge_ice_thickness, 4)
+    q_def[:] = (a / 5) * dens_grav_power * edge_thick_power #ice q due to internal deformation
+    deformation_speed[:] = (a / 5) * dens_grav_power * edge_thick_power_2   
+    q_slide[:] = (slide_ratio * deformation_speed) * edge_ice_thickness
+    q = q_def + q_slide
     q = np.insert(q, 0, 0)
     q = np.append(q, 0)
+    
+    #erosion of the bedrock
+    e = e_param * np.power(slide_ratio * deformation_speed, 2)    
+    zb[:-1] -= e * dt
     
     d_ice_thickness_dt = b - np.diff(q) / dx #conservation of mass
     ice_thickness += d_ice_thickness_dt * dt #step forwards in time
     ice_thickness[:] = ice_thickness.clip(min = 0) #eliminate negative ice thickness
     
+    #fluvial bedrock erosion where no ice
+    fluv_domain_start = np.nonzero(ice_thickness)[0][-1] + 1 #first ice-free node
+    fluv_domain = x[fluv_domain_start:]
+    if len(fluv_domain) > 1: #if all covered, no fluvial erosion
+        fluv_length = fluv_domain - x[fluv_domain_start]
+        fluv_slope = -(zb[fluv_domain_start + 1 :] - zb[fluv_domain_start : -1]) / dx
+        fluv_slope = np.append(fluv_slope, fluv_slope[-1])
+        drainage_area = np.power(fluv_length / 1, 1 / .571) #hack constant assumed == 1
+        fluv_erosion = fluvial_k * np.power(drainage_area, 1 / 2) * fluv_slope
+        zb[fluv_domain_start:] -= fluv_erosion    
+    else:
+        pass
     surface_elev = zb + ice_thickness
     
     if current_time % t_plot == 0: #plot stuff
         glacier.clear()
         glacier.plot(x / 1000, zb, color='k', linewidth = 2, label='Bedrock')
         glacier.plot(x / 1000, surface_elev, color='b', label='Ice')
-        #glacier.fill_between(x / 1000, zb, surface_elev, where = surface_elev > zb, facecolor = 'b', interpolate=True)
-        #self.schematic.plot((min(x_for_plotting), max(self.subducting_plate_x)), (rel_sl, rel_sl), color='b', label='Water')
-        #self.schematic.fill_between(x_for_plotting, -4000, self.bedrock_height[0:len(plate_for_plot)], facecolor='.5', interpolate=True)
-        #self.schematic.fill_between(self.subducting_plate_x/1000, self.bedrock_height+self.coral_height, rel_sl, where=rel_sl >self.bedrock_height+self.coral_height, facecolor='b', interpolate=True)
-        #self.schematic.fill_between(x_for_plotting, self.bedrock_height[0:len(plate_for_plot)], self.bedrock_height[0:len(plate_for_plot)]+self.coral_height[0:len(plate_for_plot)], where=self.bedrock_height[0:len(plate_for_plot)]+self.coral_height[0:len(plate_for_plot)] >self.bedrock_height[0:len(plate_for_plot)], facecolor='hotpink', interpolate=True)
         glacier.set_xlim(0, x_max/1000)
-        glacier.set_ylim(3000, 5000)
-        plt.title('A Glacier')
+        glacier.set_ylim(0, 5000)
         plt.xlabel('Distance [km]')
-        plt.ylabel('Elevation [m]')
-        plt.text(5, 3500, 'Time [yrs]: %.1f' % current_time)
-        #glacier_fig.tight_layout()
-        plt.pause(0.2)
+        glacier.set_ylabel('Elevation [m]')
+        glacier.text(5, 2000, 'Time [yrs]: %.1f' % current_time)
+        discharge_profile.plot(x / 1000, q[:-1])
+        plt.xlabel('Distance [km]')
+        plt.ylabel('Ice Discharge [m2/yr]')
+        discharge_profile.set_ylim(0, 30000)
+        plt.pause(0.1)
     else:
         pass
 ########################FINALIZE
