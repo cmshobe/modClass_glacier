@@ -24,12 +24,12 @@ slide_ratio = 0.05
 
 #spatial domain
 x_min = 0 #m
-dx = 200 #m
+dx = 500 #m
 x_max = 50000 #m
 x = np.arange(x_min, x_max + dx, dx, dtype=np.float128)
 ice_thickness = np.zeros((len(x)), dtype=np.float128)
-e_param = .01 #no idea what this should be, or its units.
-fluvial_k = .000001 #fluvial erosion efficiency parameter
+e_param = .005 #no idea what this should be, or its units.
+fluvial_k = .0005 #fluvial erosion efficiency parameter
 
 #initial bedrock topography: plane for now
 zb_max = 4000 #m
@@ -40,20 +40,20 @@ surface_elev = zb + ice_thickness
 
 #time domain
 t_min = 0
-dt = 0.001 #years
-t_max = 50000 #years
+dt = 0.005 #years
+t_max = 10000 #years
 times = np.arange(t_min, t_max + dt, dt)
 
 #mass balance/climate
-z_ELA = 3400 #m
+z_ELA = 3700 #m
 sigma_ELA = 0 #set to 0 to turn off oscillations, or amplitude of ELA
 period = 300
 z_ELA_array = z_ELA + sigma_ELA * np.cos(2 * np.pi * times / period)
 dbdz = 0.01 #m/yr/m
-b_cap = 1
+b_cap = 2
 
 #plotting
-t_plot = 1000 #years
+t_plot = 100 #years
 
 glacier_fig = plt.figure(figsize=(14,6)) #instantiate figure
 glacier = plt.subplot(211)
@@ -71,6 +71,9 @@ edge_ice_thickness = np.zeros((len(x) - 1), dtype=np.float128)
 edge_ice_surface_slopes = np.zeros((len(x) - 1), dtype=np.float128)
 ########################RUN
 it = 0 #iteration counter
+q_def = np.zeros((len(x)-1), dtype=np.float128)
+q_slide = np.zeros((len(x)-1), dtype=np.float128)
+deformation_speed = np.zeros((len(x)-1), dtype=np.float128)
 for t in range(len(times) - 1):
     it += 1
     current_time = times[t]
@@ -83,9 +86,6 @@ for t in range(len(times) - 1):
     edge_ice_surface_slopes[:] = -np.diff(surface_elev) / dx  
     
     #calculate ice flux
-    q_def = np.zeros((len(x)-1), dtype=np.float128)
-    deformation_speed = np.zeros((len(x)-1), dtype=np.float128)
-    q_slide = np.zeros((len(x)-1), dtype=np.float128)
     dens_grav_power = np.power(rho_i * g * edge_ice_surface_slopes, 3)
     edge_thick_power = np.power(edge_ice_thickness, 5)
     edge_thick_power_2 = np.power(edge_ice_thickness, 4)
@@ -113,7 +113,7 @@ for t in range(len(times) - 1):
         fluv_slope = np.append(fluv_slope, fluv_slope[-1])
         drainage_area = np.power(fluv_length / 1, 1 / .571) #hack constant assumed == 1
         fluv_erosion = fluvial_k * np.power(drainage_area, 1 / 2) * fluv_slope
-        zb[fluv_domain_start:] -= fluv_erosion    
+        zb[fluv_domain_start:] -= fluv_erosion * dt    
     else:
         pass
     surface_elev = zb + ice_thickness
@@ -123,15 +123,16 @@ for t in range(len(times) - 1):
         glacier.plot(x / 1000, zb, color='k', linewidth = 2, label='Bedrock')
         glacier.plot(x / 1000, surface_elev, color='b', label='Ice')
         glacier.set_xlim(0, x_max/1000)
-        glacier.set_ylim(0, 5000)
+        glacier.set_ylim(1000, 5000)
         plt.xlabel('Distance [km]')
         glacier.set_ylabel('Elevation [m]')
         glacier.text(5, 2000, 'Time [yrs]: %.1f' % current_time)
         discharge_profile.plot(x / 1000, q[:-1])
         plt.xlabel('Distance [km]')
         plt.ylabel('Ice Discharge [m2/yr]')
-        discharge_profile.set_ylim(0, 30000)
-        plt.pause(0.1)
+        discharge_profile.set_ylim(0, 50000)
+        plt.pause(0.001)
+        glacier_fig.savefig('glacier'+str(current_time)+'.png')
     else:
         pass
 ########################FINALIZE
